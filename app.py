@@ -42,11 +42,30 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_auth
              (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
-# --- تحديث هام: استخدام أحدث موديل من جوجل ---
+# --- التحديث الجذري: البحث الذكي عن الموديل ---
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
-    # استخدام الموديل الجديد المدمج للصور والنصوص وهو أسرع وأدق
-    return genai.GenerativeModel('gemini-1.5-flash')
+    
+    # جلب قائمة بكل الموديلات المتاحة لحسابك
+    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    
+    # البحث الآلي عن أفضل موديل متاح
+    chosen_model = None
+    for m in available_models:
+        if '1.5-flash' in m:
+            chosen_model = m
+            break
+    
+    if not chosen_model:
+        for m in available_models:
+            if 'gemini-pro' in m:
+                chosen_model = m
+                break
+                
+    if not chosen_model and available_models:
+        chosen_model = available_models[0] # الخيار الأخير
+        
+    return genai.GenerativeModel(chosen_model)
 
 # --- نظام الذاكرة وتذكرني ---
 if 'logged_in' not in st.session_state:
@@ -213,7 +232,6 @@ if text_to_process or camera_photo or uploaded_file:
         
         with st.spinner("✨ جاري التحليل بذكاء..."):
             response = model.generate_content(inputs)
-            # تنظيف رد الذكاء الاصطناعي لضمان قراءته كـ JSON
             clean_text = response.text.strip().replace('```json', '').replace('```', '')
             data = json.loads(clean_text)
             
@@ -228,7 +246,6 @@ if text_to_process or camera_photo or uploaded_file:
             st.rerun()
             
     except Exception as e:
-        # إظهار رسالة الخطأ بالتفصيل لمعرفة السبب
         st.error(f"حدث خطأ، تأكد من صحة المفتاح. (التفاصيل: {e})")
         st.session_state.process_text = "" 
 
