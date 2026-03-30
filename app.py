@@ -38,28 +38,22 @@ if 'username' not in target_cols:
     c.execute('''CREATE TABLE user_targets
                  (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
 
-# جدول الأمان الجديد لحفظ جلسات (تذكرني)
 c.execute('''CREATE TABLE IF NOT EXISTS user_auth
              (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
+# --- تحديث هام: استخدام أحدث موديل من جوجل ---
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
-    best_model = "gemini-pro-vision" 
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            if 'flash' in m.name.lower() or 'vision' in m.name.lower():
-                best_model = m.name
-                break
-    return genai.GenerativeModel(best_model)
+    # استخدام الموديل الجديد المدمج للصور والنصوص وهو أسرع وأدق
+    return genai.GenerativeModel('gemini-1.5-flash')
 
-# --- نظام الذاكرة وتذكرني (Session & Auto-Login) ---
+# --- نظام الذاكرة وتذكرني ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.api_key = ""
 
-# الدخول التلقائي السري إذا كان المتصفح يحتفظ بالرابط (تذكرني)
 if not st.session_state.logged_in:
     url_params = st.query_params
     if "token" in url_params:
@@ -71,7 +65,6 @@ if not st.session_state.logged_in:
             st.session_state.api_key = auth_data[1]
             st.session_state.logged_in = True
 
-# شاشة الدخول (تظهر فقط إذا لم تكن مسجلاً)
 if not st.session_state.logged_in:
     st.markdown("<br><h2 style='text-align: center;'>👋 أهلاً بك في مساعد التغذية</h2>", unsafe_allow_html=True)
     with st.container(border=True):
@@ -91,7 +84,6 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 
                 if remember_me:
-                    # برمجة ميزة تذكرني بوضع توكن سري في الرابط
                     token = str(uuid.uuid4())
                     c.execute("INSERT OR REPLACE INTO user_auth (username, api_key, session_token) VALUES (?, ?, ?)", (username_val, api_key_val, token))
                     conn.commit()
@@ -174,12 +166,11 @@ with st.sidebar:
                         st.success("تم الحساب والتحديث!")
                         st.rerun()
                 except Exception as e:
-                    st.error("خطأ في الحساب.")
+                    st.error("خطأ في الحساب. تأكد من صحة المفتاح أو أعد صياغة المعلومات.")
 
-# --- الواجهة الرئيسية وتفريغ مربع النص تلقائياً ---
+# --- الواجهة الرئيسية ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
 
-# دوال التفريغ التلقائي للنص
 if 'user_text' not in st.session_state:
     st.session_state.user_text = ""
 if 'process_text' not in st.session_state:
@@ -188,12 +179,11 @@ if 'process_text' not in st.session_state:
 def submit_action():
     if st.session_state.user_text:
         st.session_state.process_text = st.session_state.user_text
-        st.session_state.user_text = "" # تفريغ النص من الشاشة
+        st.session_state.user_text = "" 
 
 with st.container(border=True):
     col_input, col_submit = st.columns([7, 1.5])
     with col_input:
-        # on_change يسمح لك بالإرسال بمجرد الضغط على Enter في الكيبورد
         st.text_input("ماذا أكلت اليوم؟", key="user_text", placeholder="اكتب وجبتك هنا ثم اضغط Enter...", label_visibility="collapsed", on_change=submit_action)
     with col_submit:
         st.button("⏩", on_click=submit_action, use_container_width=True)
@@ -204,13 +194,13 @@ with st.container(border=True):
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الوجبة المرسلة ---
+# --- معالجة الوجبة ---
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
     try:
         model = get_gemini_model(api_key)
         system_prompt = """
-        أنت خبير تغذية. أعد فقط كائن JSON:
+        أنت خبير تغذية. أعد فقط كائن JSON صالح بهذا التنسيق بدون أي إضافات:
         {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
         """
         inputs = [system_prompt]
@@ -221,9 +211,11 @@ if text_to_process or camera_photo or uploaded_file:
         if photo_to_process: 
             inputs.append(Image.open(photo_to_process))
         
-        with st.spinner("✨ جاري التحليل..."):
+        with st.spinner("✨ جاري التحليل بذكاء..."):
             response = model.generate_content(inputs)
-            data = json.loads(response.text.strip().replace('```json', '').replace('```', ''))
+            # تنظيف رد الذكاء الاصطناعي لضمان قراءته كـ JSON
+            clean_text = response.text.strip().replace('```json', '').replace('```', '')
+            data = json.loads(clean_text)
             
             today = str(date.today())
             current_time = datetime.now().strftime("%H:%M") 
@@ -232,12 +224,13 @@ if text_to_process or camera_photo or uploaded_file:
                       (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"], username))
             conn.commit()
             
-            st.session_state.process_text = "" # تنظيف الذاكرة بعد الإرسال الناجح
+            st.session_state.process_text = "" 
             st.rerun()
             
     except Exception as e:
-        st.error(f"حدث خطأ في قراءة الوجبة: أعد المحاولة بشكل أوضح.")
-        st.session_state.process_text = "" # تنظيف الذاكرة حتى لو حدث خطأ
+        # إظهار رسالة الخطأ بالتفصيل لمعرفة السبب
+        st.error(f"حدث خطأ، تأكد من صحة المفتاح. (التفاصيل: {e})")
+        st.session_state.process_text = "" 
 
 # --- عرض السجل ---
 st.divider()
