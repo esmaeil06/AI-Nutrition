@@ -42,28 +42,28 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_auth
              (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
-# --- التحديث الجذري: البحث الذكي عن الموديل ---
+# --- التحديث: اختيار الموديلات المجانية فقط لتفادي خطأ 429 ---
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
     
-    # جلب قائمة بكل الموديلات المتاحة لحسابك
-    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    # قائمة الموديلات المجانية المستقرة
+    free_models = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
     
-    # البحث الآلي عن أفضل موديل متاح
+    available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    
     chosen_model = None
-    for m in available_models:
-        if '1.5-flash' in m:
-            chosen_model = m
-            break
-    
-    if not chosen_model:
-        for m in available_models:
-            if 'gemini-pro' in m:
+    for free_m in free_models:
+        for m in available:
+            if free_m in m:
                 chosen_model = m
                 break
-                
-    if not chosen_model and available_models:
-        chosen_model = available_models[0] # الخيار الأخير
+        if chosen_model:
+            break
+            
+    if not chosen_model and available:
+        # تفادي الموديلات التي ليس لها حد مجاني
+        safe_models = [m for m in available if '3.1' not in m and 'ultra' not in m]
+        chosen_model = safe_models[0] if safe_models else available[0]
         
     return genai.GenerativeModel(chosen_model)
 
