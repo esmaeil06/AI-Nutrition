@@ -42,31 +42,6 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_auth
              (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
-# --- التحديث: اختيار الموديلات المجانية فقط لتفادي خطأ 429 ---
-def get_gemini_model(api_key):
-    genai.configure(api_key=api_key)
-    
-    # قائمة الموديلات المجانية المستقرة
-    free_models = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
-    
-    available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    
-    chosen_model = None
-    for free_m in free_models:
-        for m in available:
-            if free_m in m:
-                chosen_model = m
-                break
-        if chosen_model:
-            break
-            
-    if not chosen_model and available:
-        # تفادي الموديلات التي ليس لها حد مجاني
-        safe_models = [m for m in available if '3.1' not in m and 'ultra' not in m]
-        chosen_model = safe_models[0] if safe_models else available[0]
-        
-    return genai.GenerativeModel(chosen_model)
-
 # --- نظام الذاكرة وتذكرني ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -168,14 +143,21 @@ with st.sidebar:
                 st.warning("أدخل معلوماتك أولاً.")
             else:
                 try:
-                    model = get_gemini_model(api_key)
+                    genai.configure(api_key=api_key)
                     prompt = f"""
                     أنت خبير تغذية. احسب الاحتياجات اليومية بناءً على: {profile_info}.
                     أعد كائن JSON فقط:
                     {{"calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}}
                     """
                     with st.spinner("جاري الحساب..."):
-                        res = model.generate_content(prompt)
+                        # استخدام الموديلات المجانية بشكل إجباري
+                        try:
+                            model = genai.GenerativeModel('gemini-1.5-flash')
+                            res = model.generate_content(prompt)
+                        except:
+                            model = genai.GenerativeModel('gemini-1.0-pro')
+                            res = model.generate_content(prompt)
+                            
                         clean_res = res.text.strip().replace('```json', '').replace('```', '')
                         new_targets = json.loads(clean_res)
                         
@@ -213,11 +195,11 @@ with st.container(border=True):
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الوجبة ---
+# --- معالجة الوجبة (باستخدام الموديلات المجانية فقط) ---
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
     try:
-        model = get_gemini_model(api_key)
+        genai.configure(api_key=api_key)
         system_prompt = """
         أنت خبير تغذية. أعد فقط كائن JSON صالح بهذا التنسيق بدون أي إضافات:
         {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
@@ -231,7 +213,18 @@ if text_to_process or camera_photo or uploaded_file:
             inputs.append(Image.open(photo_to_process))
         
         with st.spinner("✨ جاري التحليل بذكاء..."):
-            response = model.generate_content(inputs)
+            try:
+                # إجبار الكود على استخدام الموديل المجاني السريع
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                response = model.generate_content(inputs)
+            except Exception as e:
+                # كود احتياطي آمن في حال لم يتم العثور على فلاش
+                if photo_to_process:
+                    model = genai.GenerativeModel('gemini-1.0-pro-vision-latest')
+                else:
+                    model = genai.GenerativeModel('gemini-1.0-pro')
+                response = model.generate_content(inputs)
+                
             clean_text = response.text.strip().replace('```json', '').replace('```', '')
             data = json.loads(clean_text)
             
@@ -246,7 +239,7 @@ if text_to_process or camera_photo or uploaded_file:
             st.rerun()
             
     except Exception as e:
-        st.error(f"حدث خطأ، تأكد من صحة المفتاح. (التفاصيل: {e})")
+        st.error(f"حدث خطأ. (التفاصيل: {e})")
         st.session_state.process_text = "" 
 
 # --- عرض السجل ---
