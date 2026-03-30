@@ -5,11 +5,12 @@ import sqlite3
 import pandas as pd
 from datetime import date, datetime
 import json
+import uuid
 
 # --- إعدادات الصفحة ---
 st.set_page_config(page_title="AI Nutrition", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
-# CSS 
+# CSS
 st.markdown("""
 <style>
     .stDeployButton {display:none;}
@@ -36,6 +37,10 @@ if 'username' not in target_cols:
     c.execute("DROP TABLE user_targets")
     c.execute('''CREATE TABLE user_targets
                  (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+
+# جدول الأمان الجديد لحفظ جلسات (تذكرني)
+c.execute('''CREATE TABLE IF NOT EXISTS user_auth
+             (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
 def get_gemini_model(api_key):
@@ -48,29 +53,59 @@ def get_gemini_model(api_key):
                 break
     return genai.GenerativeModel(best_model)
 
-# --- نظام تسجيل الدخول والذاكرة (Session State) ---
+# --- نظام الذاكرة وتذكرني (Session & Auto-Login) ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.api_key = ""
 
-# شاشة تسجيل الدخول (تظهر فقط إذا لم يكن مسجلاً)
+# الدخول التلقائي السري إذا كان المتصفح يحتفظ بالرابط (تذكرني)
+if not st.session_state.logged_in:
+    url_params = st.query_params
+    if "token" in url_params:
+        token = url_params["token"]
+        c.execute("SELECT username, api_key FROM user_auth WHERE session_token=?", (token,))
+        auth_data = c.fetchone()
+        if auth_data:
+            st.session_state.username = auth_data[0]
+            st.session_state.api_key = auth_data[1]
+            st.session_state.logged_in = True
+
+# شاشة الدخول (تظهر فقط إذا لم تكن مسجلاً)
 if not st.session_state.logged_in:
     st.markdown("<br><h2 style='text-align: center;'>👋 أهلاً بك في مساعد التغذية</h2>", unsafe_allow_html=True)
     with st.container(border=True):
-        st.info("سجل دخولك أو أنشئ حسابك بكتابة اسمك ومفتاحك الخاص:")
-        user_input = st.text_input("👤 اسم المستخدم:", placeholder="اكتب اسمك هنا (بدون مسافات)")
+        st.info("سجل دخولك أو أنشئ حسابك للبدء:")
+        
+        user_input = st.text_input("👤 اسم المستخدم:", placeholder="اكتب اسمك هنا")
         key_input = st.text_input("🔑 مفتاح API الخاص بك:", type="password")
+        remember_me = st.checkbox("☑️ تذكرني (عدم الخروج عند عمل Refresh)", value=True)
         
         if st.button("دخول 🚀", use_container_width=True, type="primary"):
             if user_input and key_input:
-                st.session_state.username = user_input.strip()
-                st.session_state.api_key = key_input.strip()
+                username_val = user_input.strip()
+                api_key_val = key_input.strip()
+                
+                st.session_state.username = username_val
+                st.session_state.api_key = api_key_val
                 st.session_state.logged_in = True
+                
+                if remember_me:
+                    # برمجة ميزة تذكرني بوضع توكن سري في الرابط
+                    token = str(uuid.uuid4())
+                    c.execute("INSERT OR REPLACE INTO user_auth (username, api_key, session_token) VALUES (?, ?, ?)", (username_val, api_key_val, token))
+                    conn.commit()
+                    st.query_params["token"] = token
+                else:
+                    c.execute("INSERT OR REPLACE INTO user_auth (username, api_key, session_token) VALUES (?, ?, ?)", (username_val, api_key_val, ""))
+                    conn.commit()
+                    if "token" in st.query_params:
+                        del st.query_params["token"]
+                        
                 st.rerun()
             else:
                 st.error("يرجى إدخال الاسم والمفتاح للبدء.")
-    st.stop() # إيقاف باقي الكود حتى يسجل الدخول
+    st.stop()
 
 # --- المتغيرات الحالية للمستخدم ---
 username = st.session_state.username
@@ -83,6 +118,8 @@ with st.sidebar:
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.session_state.api_key = ""
+        if "token" in st.query_params:
+            del st.query_params["token"]
         st.rerun()
         
     st.divider()
@@ -139,26 +176,27 @@ with st.sidebar:
                 except Exception as e:
                     st.error("خطأ في الحساب.")
 
-# --- الواجهة الرئيسية وإفراغ النص تلقائياً ---
+# --- الواجهة الرئيسية وتفريغ مربع النص تلقائياً ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
 
-# دوال لتفريغ مربع النص برمجياً
+# دوال التفريغ التلقائي للنص
 if 'user_text' not in st.session_state:
     st.session_state.user_text = ""
 if 'process_text' not in st.session_state:
     st.session_state.process_text = ""
 
 def submit_action():
-    st.session_state.process_text = st.session_state.user_text
-    st.session_state.user_text = "" # هذه الخطوة تمسح المربع فوراً
+    if st.session_state.user_text:
+        st.session_state.process_text = st.session_state.user_text
+        st.session_state.user_text = "" # تفريغ النص من الشاشة
 
 with st.container(border=True):
     col_input, col_submit = st.columns([7, 1.5])
     with col_input:
-        st.text_input("ماذا أكلت اليوم؟", key="user_text", placeholder="اكتب وجبتك هنا...", label_visibility="collapsed")
+        # on_change يسمح لك بالإرسال بمجرد الضغط على Enter في الكيبورد
+        st.text_input("ماذا أكلت اليوم؟", key="user_text", placeholder="اكتب وجبتك هنا ثم اضغط Enter...", label_visibility="collapsed", on_change=submit_action)
     with col_submit:
-        # عند الضغط، تتنفذ دالة المسح أولاً
-        submit_btn = st.button("⏩", on_click=submit_action, use_container_width=True)
+        st.button("⏩", on_click=submit_action, use_container_width=True)
 
     tab_gallery, tab_camera = st.tabs(["🖼️ إرفاق من المعرض", "📷 التقاط مباشر"])
     with tab_gallery:
@@ -166,7 +204,7 @@ with st.container(border=True):
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الإدخال ---
+# --- معالجة الوجبة المرسلة ---
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
     try:
@@ -194,12 +232,12 @@ if text_to_process or camera_photo or uploaded_file:
                       (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"], username))
             conn.commit()
             
-            st.session_state.process_text = "" # إعادة تعيين الذاكرة
+            st.session_state.process_text = "" # تنظيف الذاكرة بعد الإرسال الناجح
             st.rerun()
             
     except Exception as e:
-        st.error(f"حدث خطأ في التحليل: {e}")
-        st.session_state.process_text = ""
+        st.error(f"حدث خطأ في قراءة الوجبة: أعد المحاولة بشكل أوضح.")
+        st.session_state.process_text = "" # تنظيف الذاكرة حتى لو حدث خطأ
 
 # --- عرض السجل ---
 st.divider()
