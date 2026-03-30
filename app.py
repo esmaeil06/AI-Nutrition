@@ -17,21 +17,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- إعداد قاعدة البيانات (تحديث لدعم تعدد المستخدمين) ---
+# --- إعداد قاعدة البيانات وتحديثها برمجياً لتفادي الأخطاء ---
 conn = sqlite3.connect('nutrition_data.db', check_same_thread=False)
 c = conn.cursor()
 
+# 1. تحديث أو إنشاء جدول السجلات
 c.execute('''CREATE TABLE IF NOT EXISTS daily_logs
              (date TEXT, time TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL, username TEXT)''')
+c.execute("PRAGMA table_info(daily_logs)")
+log_cols = [col[1] for col in c.fetchall()]
+if 'username' not in log_cols:
+    c.execute("ALTER TABLE daily_logs ADD COLUMN username TEXT DEFAULT 'admin'")
 
+# 2. إصلاح جدول الأهداف (هذا هو الكود الذي سيحل الخطأ عندك)
 c.execute('''CREATE TABLE IF NOT EXISTS user_targets
              (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-
-# تحديث الجداول القديمة إذا كانت موجودة (لكي لا تفقد بياناتك السابقة)
-c.execute("PRAGMA table_info(daily_logs)")
-columns = [col[1] for col in c.fetchall()]
-if 'username' not in columns:
-    c.execute("ALTER TABLE daily_logs ADD COLUMN username TEXT DEFAULT 'admin'")
+c.execute("PRAGMA table_info(user_targets)")
+target_cols = [col[1] for col in c.fetchall()]
+if 'username' not in target_cols:
+    c.execute("DROP TABLE user_targets") # حذف الجدول القديم المتعارض
+    c.execute('''CREATE TABLE user_targets
+                 (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
     
 conn.commit()
 
@@ -49,14 +55,12 @@ def get_gemini_model(api_key):
 with st.sidebar:
     st.header("👤 تسجيل الدخول والإعدادات")
     
-    # كل مستخدم يجب أن يكتب اسمه ومفتاحه
     username = st.text_input("اسم المستخدم الخاص بك:", placeholder="مثال: esmaeil")
     api_key = st.text_input("🔑 API Key الخاص بك:", type="password", help="متصفحك سيحفظ هذا المفتاح تلقائياً للمرات القادمة")
     
     st.divider()
 
     if username:
-        # التأكد من وجود أهداف لهذا المستخدم، وإلا نعطيه أهداف افتراضية
         c.execute("SELECT calories, protein, carbs, fat, fiber FROM user_targets WHERE username=?", (username,))
         user_data = c.fetchone()
         if not user_data:
@@ -111,7 +115,6 @@ with st.sidebar:
     else:
         st.warning("يرجى كتابة اسم المستخدم للبدء.")
 
-# إيقاف البرنامج إذا لم يكتب المستخدم اسمه
 if not username:
     st.info("👋 أهلاً بك! يرجى فتح القائمة الجانبية وكتابة **اسمك** و **API Key** للبدء.")
     st.stop()
@@ -167,7 +170,6 @@ if submit_btn and (user_details or camera_photo or uploaded_file):
 # --- عرض السجل ---
 st.divider()
 today_str = str(date.today())
-# جلب وجبات المستخدم الحالي فقط!
 df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}' AND username='{username}'", conn)
 
 total_cals = df['calories'].sum() if not df.empty else 0
