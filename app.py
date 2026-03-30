@@ -5,12 +5,11 @@ import sqlite3
 import pandas as pd
 from datetime import date, datetime
 import json
-import uuid
 
 # --- إعدادات الصفحة ---
 st.set_page_config(page_title="AI Nutrition", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
-# CSS
+# CSS لإخفاء زر النشر وتحسين المظهر
 st.markdown("""
 <style>
     .stDeployButton {display:none;}
@@ -18,31 +17,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- إعداد قاعدة البيانات ---
+# --- إعداد قاعدة البيانات (للمستخدم الواحد) ---
 conn = sqlite3.connect('nutrition_data.db', check_same_thread=False)
 c = conn.cursor()
 
 c.execute('''CREATE TABLE IF NOT EXISTS daily_logs
-             (date TEXT, time TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL, username TEXT)''')
+             (date TEXT, time TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+# إضافة خانة الوقت إذا لم تكن موجودة
 c.execute("PRAGMA table_info(daily_logs)")
-log_cols = [col[1] for col in c.fetchall()]
-if 'username' not in log_cols:
-    c.execute("ALTER TABLE daily_logs ADD COLUMN username TEXT DEFAULT 'admin'")
+cols = [col[1] for col in c.fetchall()]
+if 'time' not in cols:
+    c.execute("ALTER TABLE daily_logs ADD COLUMN time TEXT DEFAULT '-'")
 
 c.execute('''CREATE TABLE IF NOT EXISTS user_targets
-             (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-c.execute("PRAGMA table_info(user_targets)")
-target_cols = [col[1] for col in c.fetchall()]
-if 'username' not in target_cols:
-    c.execute("DROP TABLE user_targets")
-    c.execute('''CREATE TABLE user_targets
-                 (username TEXT PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-
-c.execute('''CREATE TABLE IF NOT EXISTS user_auth
-             (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
+             (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+c.execute("SELECT * FROM user_targets WHERE id=1")
+if not c.fetchone():
+    c.execute("INSERT INTO user_targets (id, calories, protein, carbs, fat, fiber) VALUES (1, 2250, 142, 255, 75, 35)")
 conn.commit()
 
-# --- الدالة الأصلية القديمة التي كانت تعمل معك بدون مشاكل ---
+c.execute("SELECT calories, protein, carbs, fat, fiber FROM user_targets WHERE id=1")
+t_cal, t_pro, t_carbs, t_fat, t_fib = c.fetchone()
+
+# الدالة الأصلية التي كانت تعمل معك بشكل ممتاز
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
     best_model = "gemini-pro-vision" 
@@ -53,83 +50,15 @@ def get_gemini_model(api_key):
                 break
     return genai.GenerativeModel(best_model)
 
-# --- نظام الذاكرة وتذكرني ---
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.session_state.api_key = ""
-
-if not st.session_state.logged_in:
-    url_params = st.query_params
-    if "token" in url_params:
-        token = url_params["token"]
-        c.execute("SELECT username, api_key FROM user_auth WHERE session_token=?", (token,))
-        auth_data = c.fetchone()
-        if auth_data:
-            st.session_state.username = auth_data[0]
-            st.session_state.api_key = auth_data[1]
-            st.session_state.logged_in = True
-
-if not st.session_state.logged_in:
-    st.markdown("<br><h2 style='text-align: center;'>👋 أهلاً بك في مساعد التغذية</h2>", unsafe_allow_html=True)
-    with st.container(border=True):
-        st.info("سجل دخولك أو أنشئ حسابك للبدء:")
-        
-        user_input = st.text_input("👤 اسم المستخدم:", placeholder="اكتب اسمك هنا")
-        key_input = st.text_input("🔑 مفتاح API الخاص بك:", type="password")
-        remember_me = st.checkbox("☑️ تذكرني (عدم الخروج عند عمل Refresh)", value=True)
-        
-        if st.button("دخول 🚀", use_container_width=True, type="primary"):
-            if user_input and key_input:
-                username_val = user_input.strip()
-                api_key_val = key_input.strip()
-                
-                st.session_state.username = username_val
-                st.session_state.api_key = api_key_val
-                st.session_state.logged_in = True
-                
-                if remember_me:
-                    token = str(uuid.uuid4())
-                    c.execute("INSERT OR REPLACE INTO user_auth (username, api_key, session_token) VALUES (?, ?, ?)", (username_val, api_key_val, token))
-                    conn.commit()
-                    st.query_params["token"] = token
-                else:
-                    c.execute("INSERT OR REPLACE INTO user_auth (username, api_key, session_token) VALUES (?, ?, ?)", (username_val, api_key_val, ""))
-                    conn.commit()
-                    if "token" in st.query_params:
-                        del st.query_params["token"]
-                        
-                st.rerun()
-            else:
-                st.error("يرجى إدخال الاسم والمفتاح للبدء.")
-    st.stop()
-
-# --- المتغيرات الحالية للمستخدم ---
-username = st.session_state.username
-api_key = st.session_state.api_key
-
-# --- القائمة الجانبية ---
+# --- القائمة الجانبية (الإعدادات البسيطة) ---
 with st.sidebar:
-    st.header(f"👤 مرحباً، {username}")
-    if st.button("🚪 تسجيل الخروج"):
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-        st.session_state.api_key = ""
-        if "token" in st.query_params:
-            del st.query_params["token"]
-        st.rerun()
-        
+    st.header("⚙️ الإعدادات والأهداف")
+    # سحب المفتاح من الأسرار إذا كان موجوداً
+    saved_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    api_key = st.text_input("🔑 API Key:", type="password", value=saved_key)
+    
     st.divider()
-
-    c.execute("SELECT calories, protein, carbs, fat, fiber FROM user_targets WHERE username=?", (username,))
-    user_data = c.fetchone()
-    if not user_data:
-        c.execute("INSERT INTO user_targets VALUES (?, 2250, 142, 255, 75, 35)", (username,))
-        conn.commit()
-        t_cal, t_pro, t_carbs, t_fat, t_fib = 2250, 142, 255, 75, 35
-    else:
-        t_cal, t_pro, t_carbs, t_fat, t_fib = user_data
-
+    
     with st.expander("✏️ تعديل الأهداف يدوياً"):
         col1, col2 = st.columns(2)
         with col1:
@@ -141,8 +70,8 @@ with st.sidebar:
             new_fat = st.number_input("🥑 الدهون (g)", min_value=0, max_value=200, value=int(t_fat), step=5)
             
         if st.button("حفظ التعديلات 💾", use_container_width=True):
-            c.execute("UPDATE user_targets SET calories=?, protein=?, carbs=?, fat=?, fiber=? WHERE username=?",
-                      (new_cal, new_pro, new_carbs, new_fat, new_fib, username))
+            c.execute("UPDATE user_targets SET calories=?, protein=?, carbs=?, fat=?, fiber=? WHERE id=1",
+                      (new_cal, new_pro, new_carbs, new_fat, new_fib))
             conn.commit()
             st.success("تم التحديث!")
             st.rerun()
@@ -150,8 +79,8 @@ with st.sidebar:
     with st.expander("🤖 حساب الأهداف بالذكاء الاصطناعي"):
         profile_info = st.text_area("معلوماتك:", placeholder="العمر، الطول، الوزن، النشاط، الهدف...", height=100)
         if st.button("احسب أهدافي 🎯", use_container_width=True):
-            if not profile_info:
-                st.warning("أدخل معلوماتك أولاً.")
+            if not api_key or not profile_info:
+                st.warning("أدخل المفتاح والمعلومات أولاً.")
             else:
                 try:
                     model = get_gemini_model(api_key)
@@ -165,15 +94,15 @@ with st.sidebar:
                         clean_res = res.text.strip().replace('```json', '').replace('```', '')
                         new_targets = json.loads(clean_res)
                         
-                        c.execute("UPDATE user_targets SET calories=?, protein=?, carbs=?, fat=?, fiber=? WHERE username=?",
-                                  (new_targets['calories'], new_targets['protein'], new_targets['carbs'], new_targets['fat'], new_targets['fiber'], username))
+                        c.execute("UPDATE user_targets SET calories=?, protein=?, carbs=?, fat=?, fiber=? WHERE id=1",
+                                  (new_targets['calories'], new_targets['protein'], new_targets['carbs'], new_targets['fat'], new_targets['fiber']))
                         conn.commit()
                         st.success("تم الحساب والتحديث!")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"خطأ في الحساب. (التفاصيل: {e})")
+                    st.error(f"خطأ في الحساب. التفاصيل: {e}")
 
-# --- الواجهة الرئيسية ---
+# --- الواجهة الرئيسية (مع ميزة مسح النص التلقائي) ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
 
 if 'user_text' not in st.session_state:
@@ -199,46 +128,61 @@ with st.container(border=True):
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الوجبة (باستخدام الدالة الأصلية) ---
+# --- معالجة الإدخال ---
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
-    try:
-        model = get_gemini_model(api_key)
-        system_prompt = """
-        أنت خبير تغذية. أعد فقط كائن JSON صالح بهذا التنسيق بدون أي إضافات:
-        {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
-        """
-        inputs = [system_prompt]
-        if text_to_process: 
-            inputs.append(f"التفاصيل: {text_to_process}")
-        
-        photo_to_process = camera_photo if camera_photo else uploaded_file
-        if photo_to_process: 
-            inputs.append(Image.open(photo_to_process))
-        
-        with st.spinner("✨ جاري التحليل بذكاء..."):
-            response = model.generate_content(inputs)
-            clean_text = response.text.strip().replace('```json', '').replace('```', '')
-            data = json.loads(clean_text)
+    if not api_key:
+        st.error("يرجى إدخال API Key في القائمة الجانبية أو في الإعدادات السرية للموقع.")
+        st.session_state.process_text = ""
+    else:
+        try:
+            model = get_gemini_model(api_key)
+            system_prompt = """
+            أنت خبير تغذية. أعد فقط كائن JSON:
+            {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
+            """
+            inputs = [system_prompt]
+            if text_to_process: inputs.append(f"التفاصيل: {text_to_process}")
             
-            today = str(date.today())
-            current_time = datetime.now().strftime("%H:%M") 
+            photo_to_process = camera_photo if camera_photo else uploaded_file
+            if photo_to_process: inputs.append(Image.open(photo_to_process))
             
-            c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber, username) VALUES (?,?,?,?,?,?,?,?,?)", 
-                      (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"], username))
-            conn.commit()
-            
-            st.session_state.process_text = "" 
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"حدث خطأ. (التفاصيل: {e})")
-        st.session_state.process_text = "" 
+            with st.spinner("✨ جاري التحليل..."):
+                response = model.generate_content(inputs)
+                clean_text = response.text.strip().replace('```json', '').replace('```', '')
+                data = json.loads(clean_text)
+                
+                today = str(date.today())
+                current_time = datetime.now().strftime("%H:%M") 
+                
+                # التعامل مع قاعدة البيانات لضمان عدم حدوث خطأ بسبب التحديثات السابقة
+                c.execute("PRAGMA table_info(daily_logs)")
+                log_cols = [col[1] for col in c.fetchall()]
+                
+                if 'username' in log_cols:
+                    c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber, username) VALUES (?,?,?,?,?,?,?,?,?)", 
+                              (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"], "admin"))
+                else:
+                    c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber) VALUES (?,?,?,?,?,?,?,?)", 
+                              (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"]))
+                conn.commit()
+                
+                st.session_state.process_text = ""
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"حدث خطأ. (التفاصيل: {e})")
+            st.session_state.process_text = ""
 
 # --- عرض السجل ---
 st.divider()
 today_str = str(date.today())
-df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}' AND username='{username}'", conn)
+
+c.execute("PRAGMA table_info(daily_logs)")
+if 'username' in [col[1] for col in c.fetchall()]:
+    df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}' AND username='admin'", conn)
+else:
+    df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}'", conn)
 
 total_cals = df['calories'].sum() if not df.empty else 0
 prot_sum = df['protein'].sum() if not df.empty else 0
