@@ -9,7 +9,7 @@ import json
 # --- إعدادات الصفحة ---
 st.set_page_config(page_title="AI Nutrition", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
-# CSS لإخفاء زر النشر وتحسين المظهر
+# CSS لإخفاء زر Deploy فقط وتحسين شريط التحميل
 st.markdown("""
 <style>
     .stDeployButton {display:none;}
@@ -17,27 +17,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- إعداد قاعدة البيانات (للمستخدم الواحد) ---
+# --- إعداد قاعدة البيانات ---
 conn = sqlite3.connect('nutrition_data.db', check_same_thread=False)
 c = conn.cursor()
 
 c.execute('''CREATE TABLE IF NOT EXISTS daily_logs
-             (date TEXT, time TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+             (date TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
 c.execute("PRAGMA table_info(daily_logs)")
-cols = [col[1] for col in c.fetchall()]
-if 'time' not in cols:
+if 'time' not in [col[1] for col in c.fetchall()]:
     c.execute("ALTER TABLE daily_logs ADD COLUMN time TEXT DEFAULT '-'")
 
 c.execute('''CREATE TABLE IF NOT EXISTS user_targets
              (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-c.execute("PRAGMA table_info(user_targets)")
-target_cols = [col[1] for col in c.fetchall()]
-if 'id' not in target_cols:
-    c.execute("DROP TABLE user_targets") 
-    c.execute('''CREATE TABLE user_targets
-                 (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-
-c.execute("SELECT * FROM user_targets WHERE id=1")
+c.execute("SELECT * FROM user_targets")
 if not c.fetchone():
     c.execute("INSERT INTO user_targets (id, calories, protein, carbs, fat, fiber) VALUES (1, 2250, 142, 255, 75, 35)")
 conn.commit()
@@ -55,9 +47,11 @@ def get_gemini_model(api_key):
                 break
     return genai.GenerativeModel(best_model)
 
-# --- القائمة الجانبية ---
+# --- القائمة الجانبية (الإعدادات) ---
 with st.sidebar:
     st.header("⚙️ الإعدادات والأهداف")
+    
+    # جلب المفتاح تلقائياً من الأسرار إذا كان موجوداً، وإلا يطلب من المستخدم إدخاله
     saved_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
     api_key = st.text_input("🔑 API Key:", type="password", value=saved_key)
     
@@ -104,98 +98,62 @@ with st.sidebar:
                         st.success("تم الحساب والتحديث!")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"خطأ في الحساب. التفاصيل: {e}")
+                    st.error("خطأ في الحساب.")
 
 # --- الواجهة الرئيسية ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
 
-if 'user_text' not in st.session_state:
-    st.session_state.user_text = ""
-if 'process_text' not in st.session_state:
-    st.session_state.process_text = ""
-
-def submit_action():
-    if st.session_state.user_text:
-        st.session_state.process_text = st.session_state.user_text
-        st.session_state.user_text = "" 
-
 with st.container(border=True):
     col_input, col_submit = st.columns([7, 1.5])
     with col_input:
-        st.text_input("ماذا أكلت اليوم؟", key="user_text", placeholder="اكتب وجبتك هنا ثم اضغط Enter...", label_visibility="collapsed", on_change=submit_action)
+        user_details = st.text_input("ماذا أكلت اليوم؟", placeholder="اكتب هنا...", label_visibility="collapsed")
     with col_submit:
-        st.button("⏩", on_click=submit_action, use_container_width=True)
+        submit_btn = st.button("⏩", use_container_width=True)
 
     tab_gallery, tab_camera = st.tabs(["🖼️ إرفاق من المعرض", "📷 التقاط مباشر"])
     with tab_gallery:
-        # إضافة خاصية قبول الصور المتعددة
-        uploaded_files = st.file_uploader("تصفح", type=["jpg", "jpeg", "png"], accept_multiple_files=True, label_visibility="collapsed")
+        uploaded_file = st.file_uploader("تصفح", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الإدخال (نص + صورة واحدة + عدة صور) ---
-text_to_process = st.session_state.process_text
-if text_to_process or camera_photo or uploaded_files:
+# --- معالجة الإدخال ---
+if submit_btn and (user_details or camera_photo or uploaded_file):
     if not api_key:
-        st.error("يرجى إدخال API Key في القائمة الجانبية أو في الإعدادات السرية للموقع.")
-        st.session_state.process_text = ""
+        st.error("يرجى إدخال API Key في القائمة الجانبية.")
     else:
         try:
             model = get_gemini_model(api_key)
-            # تعديل التلقين ليجمع أسماء الأكل من كل الصور
             system_prompt = """
-            أنت خبير تغذية. أعد فقط كائن JSON. إذا كان هناك عدة أطعمة في النص أو الصور، اجمع السعرات والعناصر الغذائية كلها في كائن واحد، واكتب كل الأسماء مدمجة في حقل food_name:
-            {"food_name": "اسم الطعام (اجمع أسماء الأطعمة)", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
+            أنت خبير تغذية. أعد فقط كائن JSON:
+            {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
             """
             inputs = [system_prompt]
-            if text_to_process: 
-                inputs.append(f"التفاصيل: {text_to_process}")
+            if user_details: inputs.append(f"التفاصيل: {user_details}")
             
-            # إذا استخدم الكاميرا المباشرة
-            if camera_photo: 
-                inputs.append(Image.open(camera_photo))
-                
-            # إذا أرفق عدة صور من المعرض
-            if uploaded_files:
-                for file in uploaded_files:
-                    inputs.append(Image.open(file))
+            photo_to_process = camera_photo if camera_photo else uploaded_file
+            if photo_to_process: inputs.append(Image.open(photo_to_process))
             
-            with st.spinner("✨ جاري تحليل الوجبة..."):
+            with st.spinner("✨ جاري التحليل..."):
                 response = model.generate_content(inputs)
-                clean_text = response.text.strip().replace('```json', '').replace('```', '')
-                data = json.loads(clean_text)
+                data = json.loads(response.text.strip().replace('```json', '').replace('```', ''))
                 
                 today = str(date.today())
                 current_time = datetime.now().strftime("%H:%M") 
                 
-                c.execute("PRAGMA table_info(daily_logs)")
-                log_cols = [col[1] for col in c.fetchall()]
-                
-                if 'username' in log_cols:
-                    c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber, username) VALUES (?,?,?,?,?,?,?,?,?)", 
-                              (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"], "admin"))
-                else:
-                    c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber) VALUES (?,?,?,?,?,?,?,?)", 
-                              (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"]))
+                c.execute("INSERT INTO daily_logs (date, time, food_name, calories, protein, carbs, fat, fiber) VALUES (?,?,?,?,?,?,?,?)", 
+                          (today, current_time, data["food_name"], data["calories"], data["protein"], data["carbs"], data["fat"], data["fiber"]))
                 conn.commit()
-                
-                st.session_state.process_text = ""
                 st.rerun()
                 
         except Exception as e:
-            st.error(f"حدث خطأ. (التفاصيل: {e})")
-            st.session_state.process_text = ""
+            st.error("حدث خطأ في قراءة الوجبة.")
 
 # --- عرض السجل ---
 st.divider()
 today_str = str(date.today())
+df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}'", conn)
 
-c.execute("PRAGMA table_info(daily_logs)")
-if 'username' in [col[1] for col in c.fetchall()]:
-    df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}' AND username='admin'", conn)
-else:
-    df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}'", conn)
-
+# حساب المجموع سواء كان هناك وجبات أو لا
 total_cals = df['calories'].sum() if not df.empty else 0
 prot_sum = df['protein'].sum() if not df.empty else 0
 fat_sum = df['fat'].sum() if not df.empty else 0
@@ -206,6 +164,7 @@ st.markdown(f"<h4 style='text-align: center;'>📊 استهلاك اليوم: {t
 st.progress(min(total_cals / t_cal, 1.0) if t_cal > 0 else 0)
 st.write("") 
 
+# دالة رسم الخطوط (تم إخراجها من شرط df.empty لتظهر دائماً)
 def make_bar(title, consumed, target, color):
     percent = min((consumed / target) * 100, 100) if target > 0 else 0
     return f"""
@@ -220,6 +179,7 @@ def make_bar(title, consumed, target, color):
     </div>
     """
 
+# رسم خطوط البروتين والكارب والدهون (تظهر دائماً)
 c1, c2 = st.columns(2)
 with c1:
     st.markdown(make_bar("🥩 بروتين", prot_sum, t_pro, "#FF6B6B"), unsafe_allow_html=True)
@@ -230,6 +190,7 @@ with c2:
 
 st.write("")
 
+# عرض سجل الوجبات للتعديل والحذف (يظهر فقط إذا كان هناك وجبات مسجلة)
 if not df.empty:
     with st.expander("📝 عرض وتعديل سجل الوجبات"):
         for index, row in df.sort_values(by='time', ascending=False).iterrows():
