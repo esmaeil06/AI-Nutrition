@@ -9,7 +9,7 @@ import json
 # --- إعدادات الصفحة ---
 st.set_page_config(page_title="AI Nutrition", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
-# CSS لإخفاء القوائم العلوية
+# CSS لإخفاء زر النشر وتحسين المظهر
 st.markdown("""
 <style>
     .stDeployButton {display:none;}
@@ -17,7 +17,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- إعداد قاعدة البيانات ---
+# --- إعداد قاعدة البيانات (للمستخدم الواحد) ---
 conn = sqlite3.connect('nutrition_data.db', check_same_thread=False)
 c = conn.cursor()
 
@@ -28,13 +28,12 @@ cols = [col[1] for col in c.fetchall()]
 if 'time' not in cols:
     c.execute("ALTER TABLE daily_logs ADD COLUMN time TEXT DEFAULT '-'")
 
-# --- إصلاح تعارض قاعدة البيانات ---
 c.execute('''CREATE TABLE IF NOT EXISTS user_targets
              (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
 c.execute("PRAGMA table_info(user_targets)")
 target_cols = [col[1] for col in c.fetchall()]
 if 'id' not in target_cols:
-    c.execute("DROP TABLE user_targets") # مسح الجدول المتعارض
+    c.execute("DROP TABLE user_targets") 
     c.execute('''CREATE TABLE user_targets
                  (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
 
@@ -46,7 +45,6 @@ conn.commit()
 c.execute("SELECT calories, protein, carbs, fat, fiber FROM user_targets WHERE id=1")
 t_cal, t_pro, t_carbs, t_fat, t_fib = c.fetchone()
 
-# دالة الذكاء الاصطناعي الأصلية المستقرة
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
     best_model = "gemini-pro-vision" 
@@ -130,30 +128,39 @@ with st.container(border=True):
 
     tab_gallery, tab_camera = st.tabs(["🖼️ إرفاق من المعرض", "📷 التقاط مباشر"])
     with tab_gallery:
-        uploaded_file = st.file_uploader("تصفح", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+        # إضافة خاصية قبول الصور المتعددة
+        uploaded_files = st.file_uploader("تصفح", type=["jpg", "jpeg", "png"], accept_multiple_files=True, label_visibility="collapsed")
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الإدخال ---
+# --- معالجة الإدخال (نص + صورة واحدة + عدة صور) ---
 text_to_process = st.session_state.process_text
-if text_to_process or camera_photo or uploaded_file:
+if text_to_process or camera_photo or uploaded_files:
     if not api_key:
-        st.error("يرجى إدخال API Key في القائمة الجانبية.")
+        st.error("يرجى إدخال API Key في القائمة الجانبية أو في الإعدادات السرية للموقع.")
         st.session_state.process_text = ""
     else:
         try:
             model = get_gemini_model(api_key)
+            # تعديل التلقين ليجمع أسماء الأكل من كل الصور
             system_prompt = """
-            أنت خبير تغذية. أعد فقط كائن JSON:
-            {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
+            أنت خبير تغذية. أعد فقط كائن JSON. إذا كان هناك عدة أطعمة في النص أو الصور، اجمع السعرات والعناصر الغذائية كلها في كائن واحد، واكتب كل الأسماء مدمجة في حقل food_name:
+            {"food_name": "اسم الطعام (اجمع أسماء الأطعمة)", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
             """
             inputs = [system_prompt]
-            if text_to_process: inputs.append(f"التفاصيل: {text_to_process}")
+            if text_to_process: 
+                inputs.append(f"التفاصيل: {text_to_process}")
             
-            photo_to_process = camera_photo if camera_photo else uploaded_file
-            if photo_to_process: inputs.append(Image.open(photo_to_process))
+            # إذا استخدم الكاميرا المباشرة
+            if camera_photo: 
+                inputs.append(Image.open(camera_photo))
+                
+            # إذا أرفق عدة صور من المعرض
+            if uploaded_files:
+                for file in uploaded_files:
+                    inputs.append(Image.open(file))
             
-            with st.spinner("✨ جاري التحليل..."):
+            with st.spinner("✨ جاري تحليل الوجبة..."):
                 response = model.generate_content(inputs)
                 clean_text = response.text.strip().replace('```json', '').replace('```', '')
                 data = json.loads(clean_text)
