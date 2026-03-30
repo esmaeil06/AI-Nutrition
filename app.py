@@ -50,12 +50,14 @@ def get_gemini_model(api_key):
 # --- القائمة الجانبية (الإعدادات) ---
 with st.sidebar:
     st.header("⚙️ الإعدادات والأهداف")
-    api_key = st.text_input("🔑 API Key:", type="password")
+    
+    # جلب المفتاح تلقائياً من الأسرار إذا كان موجوداً، وإلا يطلب من المستخدم إدخاله
+    saved_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    api_key = st.text_input("🔑 API Key:", type="password", value=saved_key)
     
     st.divider()
     
     with st.expander("✏️ تعديل الأهداف يدوياً"):
-        # استخدام الأعمدة لجعل المربعات صغيرة وأنيقة وتدعم الكتابة
         col1, col2 = st.columns(2)
         with col1:
             new_cal = st.number_input("🔥 السعرات", min_value=1000, max_value=5000, value=int(t_cal), step=50)
@@ -151,35 +153,45 @@ st.divider()
 today_str = str(date.today())
 df = pd.read_sql_query(f"SELECT rowid, * FROM daily_logs WHERE date='{today_str}'", conn)
 
+# حساب المجموع سواء كان هناك وجبات أو لا
 total_cals = df['calories'].sum() if not df.empty else 0
+prot_sum = df['protein'].sum() if not df.empty else 0
+fat_sum = df['fat'].sum() if not df.empty else 0
+carbs_sum = df['carbs'].sum() if not df.empty else 0
+fiber_sum = df['fiber'].sum() if not df.empty else 0
+
 st.markdown(f"<h4 style='text-align: center;'>📊 استهلاك اليوم: {total_cals:.0f} / {t_cal:.0f} kcal</h4>", unsafe_allow_html=True)
 st.progress(min(total_cals / t_cal, 1.0) if t_cal > 0 else 0)
 st.write("") 
 
-if not df.empty:
-    def make_bar(title, consumed, target, color):
-        percent = min((consumed / target) * 100, 100) if target > 0 else 0
-        return f"""
-        <div style="margin-bottom: 15px;">
-            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 5px; color: #ddd;">
-                <strong>{title}</strong>
-                <span>{consumed:.1f} / {target}g</span>
-            </div>
-            <div style="background-color: #2b2b36; border-radius: 8px; height: 10px; width: 100%; overflow: hidden;">
-                <div style="background-color: {color}; width: {percent}%; height: 100%; border-radius: 8px;"></div>
-            </div>
+# دالة رسم الخطوط (تم إخراجها من شرط df.empty لتظهر دائماً)
+def make_bar(title, consumed, target, color):
+    percent = min((consumed / target) * 100, 100) if target > 0 else 0
+    return f"""
+    <div style="margin-bottom: 15px;">
+        <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 5px; color: #ddd;">
+            <strong>{title}</strong>
+            <span>{consumed:.1f} / {target}g</span>
         </div>
-        """
+        <div style="background-color: #2b2b36; border-radius: 8px; height: 10px; width: 100%; overflow: hidden;">
+            <div style="background-color: {color}; width: {percent}%; height: 100%; border-radius: 8px;"></div>
+        </div>
+    </div>
+    """
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(make_bar("🥩 بروتين", df['protein'].sum(), t_pro, "#FF6B6B"), unsafe_allow_html=True)
-        st.markdown(make_bar("🥑 دهون", df['fat'].sum(), t_fat, "#FFE66D"), unsafe_allow_html=True)
-    with c2:
-        st.markdown(make_bar("🍚 كارب", df['carbs'].sum(), t_carbs, "#4ECDC4"), unsafe_allow_html=True)
-        st.markdown(make_bar("🥗 ألياف", df['fiber'].sum(), t_fib, "#95E1D3"), unsafe_allow_html=True)
-    
-    st.write("")
+# رسم خطوط البروتين والكارب والدهون (تظهر دائماً)
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown(make_bar("🥩 بروتين", prot_sum, t_pro, "#FF6B6B"), unsafe_allow_html=True)
+    st.markdown(make_bar("🥑 دهون", fat_sum, t_fat, "#FFE66D"), unsafe_allow_html=True)
+with c2:
+    st.markdown(make_bar("🍚 كارب", carbs_sum, t_carbs, "#4ECDC4"), unsafe_allow_html=True)
+    st.markdown(make_bar("🥗 ألياف", fiber_sum, t_fib, "#95E1D3"), unsafe_allow_html=True)
+
+st.write("")
+
+# عرض سجل الوجبات للتعديل والحذف (يظهر فقط إذا كان هناك وجبات مسجلة)
+if not df.empty:
     with st.expander("📝 عرض وتعديل سجل الوجبات"):
         for index, row in df.sort_values(by='time', ascending=False).iterrows():
             col_info, col_del = st.columns([8, 1])
