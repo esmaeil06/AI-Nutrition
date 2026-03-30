@@ -9,7 +9,7 @@ import json
 # --- إعدادات الصفحة ---
 st.set_page_config(page_title="AI Nutrition", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
-# CSS لإخفاء زر النشر وتحسين المظهر
+# CSS لإخفاء القوائم العلوية
 st.markdown("""
 <style>
     .stDeployButton {display:none;}
@@ -17,20 +17,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- إعداد قاعدة البيانات (للمستخدم الواحد) ---
+# --- إعداد قاعدة البيانات ---
 conn = sqlite3.connect('nutrition_data.db', check_same_thread=False)
 c = conn.cursor()
 
 c.execute('''CREATE TABLE IF NOT EXISTS daily_logs
              (date TEXT, time TEXT, food_name TEXT, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
-# إضافة خانة الوقت إذا لم تكن موجودة
 c.execute("PRAGMA table_info(daily_logs)")
 cols = [col[1] for col in c.fetchall()]
 if 'time' not in cols:
     c.execute("ALTER TABLE daily_logs ADD COLUMN time TEXT DEFAULT '-'")
 
+# --- إصلاح تعارض قاعدة البيانات ---
 c.execute('''CREATE TABLE IF NOT EXISTS user_targets
              (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+c.execute("PRAGMA table_info(user_targets)")
+target_cols = [col[1] for col in c.fetchall()]
+if 'id' not in target_cols:
+    c.execute("DROP TABLE user_targets") # مسح الجدول المتعارض
+    c.execute('''CREATE TABLE user_targets
+                 (id INTEGER PRIMARY KEY, calories REAL, protein REAL, carbs REAL, fat REAL, fiber REAL)''')
+
 c.execute("SELECT * FROM user_targets WHERE id=1")
 if not c.fetchone():
     c.execute("INSERT INTO user_targets (id, calories, protein, carbs, fat, fiber) VALUES (1, 2250, 142, 255, 75, 35)")
@@ -39,7 +46,7 @@ conn.commit()
 c.execute("SELECT calories, protein, carbs, fat, fiber FROM user_targets WHERE id=1")
 t_cal, t_pro, t_carbs, t_fat, t_fib = c.fetchone()
 
-# الدالة الأصلية التي كانت تعمل معك بشكل ممتاز
+# دالة الذكاء الاصطناعي الأصلية المستقرة
 def get_gemini_model(api_key):
     genai.configure(api_key=api_key)
     best_model = "gemini-pro-vision" 
@@ -50,10 +57,9 @@ def get_gemini_model(api_key):
                 break
     return genai.GenerativeModel(best_model)
 
-# --- القائمة الجانبية (الإعدادات البسيطة) ---
+# --- القائمة الجانبية ---
 with st.sidebar:
     st.header("⚙️ الإعدادات والأهداف")
-    # سحب المفتاح من الأسرار إذا كان موجوداً
     saved_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
     api_key = st.text_input("🔑 API Key:", type="password", value=saved_key)
     
@@ -102,7 +108,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"خطأ في الحساب. التفاصيل: {e}")
 
-# --- الواجهة الرئيسية (مع ميزة مسح النص التلقائي) ---
+# --- الواجهة الرئيسية ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
 
 if 'user_text' not in st.session_state:
@@ -132,7 +138,7 @@ with st.container(border=True):
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
     if not api_key:
-        st.error("يرجى إدخال API Key في القائمة الجانبية أو في الإعدادات السرية للموقع.")
+        st.error("يرجى إدخال API Key في القائمة الجانبية.")
         st.session_state.process_text = ""
     else:
         try:
@@ -155,7 +161,6 @@ if text_to_process or camera_photo or uploaded_file:
                 today = str(date.today())
                 current_time = datetime.now().strftime("%H:%M") 
                 
-                # التعامل مع قاعدة البيانات لضمان عدم حدوث خطأ بسبب التحديثات السابقة
                 c.execute("PRAGMA table_info(daily_logs)")
                 log_cols = [col[1] for col in c.fetchall()]
                 
