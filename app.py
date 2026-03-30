@@ -118,14 +118,11 @@ with st.container(border=True):
     with col_submit:
         submit_btn = st.button("⏩", use_container_width=True)
 
-    tab_gallery, tab_camera = st.tabs(["🖼️ إرفاق من المعرض", "📷 التقاط مباشر"])
-    with tab_gallery:
-        uploaded_file = st.file_uploader("تصفح", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
-    with tab_camera:
-        camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
+    # تم حذف الكاميرا وإبقاء خيار إرفاق الصور من المعرض فقط
+    uploaded_file = st.file_uploader("🖼️ إرفاق صورة من المعرض", type=["jpg", "jpeg", "png"])
 
 # --- معالجة الإدخال ---
-if submit_btn and (user_details or camera_photo or uploaded_file):
+if submit_btn and (user_details or uploaded_file):
     if not api_key:
         st.error("يرجى إدخال API Key في القائمة الجانبية.")
     else:
@@ -138,8 +135,7 @@ if submit_btn and (user_details or camera_photo or uploaded_file):
             inputs = [system_prompt]
             if user_details: inputs.append(f"التفاصيل: {user_details}")
             
-            photo_to_process = camera_photo if camera_photo else uploaded_file
-            if photo_to_process: inputs.append(Image.open(photo_to_process))
+            if uploaded_file: inputs.append(Image.open(uploaded_file))
             
             with st.spinner("✨ جاري التحليل..."):
                 response = model.generate_content(inputs)
@@ -191,7 +187,8 @@ with c1:
     st.markdown(make_bar("🥩 بروتين", prot_sum, t_pro, "#FF6B6B"), unsafe_allow_html=True)
     st.markdown(make_bar("🥑 دهون", fat_sum, t_fat, "#FFE66D"), unsafe_allow_html=True)
 with c2:
-    st.markdown(make_bar("🍚 كارب", carbs_sum, t_carbs, "#4ECDC4"), unsafe_allow_html=True)
+    # تم تغيير لون الكارب إلى الأزرق لتمييزه عن الألياف
+    st.markdown(make_bar("🍚 كارب", carbs_sum, t_carbs, "#4EA8DE"), unsafe_allow_html=True)
     st.markdown(make_bar("🥗 ألياف", fiber_sum, t_fib, "#95E1D3"), unsafe_allow_html=True)
 
 st.write("")
