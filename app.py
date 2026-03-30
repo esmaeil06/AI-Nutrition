@@ -42,6 +42,17 @@ c.execute('''CREATE TABLE IF NOT EXISTS user_auth
              (username TEXT PRIMARY KEY, api_key TEXT, session_token TEXT)''')
 conn.commit()
 
+# --- الدالة الأصلية القديمة التي كانت تعمل معك بدون مشاكل ---
+def get_gemini_model(api_key):
+    genai.configure(api_key=api_key)
+    best_model = "gemini-pro-vision" 
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            if 'flash' in m.name.lower() or 'vision' in m.name.lower():
+                best_model = m.name
+                break
+    return genai.GenerativeModel(best_model)
+
 # --- نظام الذاكرة وتذكرني ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -143,21 +154,14 @@ with st.sidebar:
                 st.warning("أدخل معلوماتك أولاً.")
             else:
                 try:
-                    genai.configure(api_key=api_key)
+                    model = get_gemini_model(api_key)
                     prompt = f"""
                     أنت خبير تغذية. احسب الاحتياجات اليومية بناءً على: {profile_info}.
                     أعد كائن JSON فقط:
                     {{"calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}}
                     """
                     with st.spinner("جاري الحساب..."):
-                        # استخدام الموديلات المجانية بشكل إجباري
-                        try:
-                            model = genai.GenerativeModel('gemini-1.5-flash')
-                            res = model.generate_content(prompt)
-                        except:
-                            model = genai.GenerativeModel('gemini-1.0-pro')
-                            res = model.generate_content(prompt)
-                            
+                        res = model.generate_content(prompt)
                         clean_res = res.text.strip().replace('```json', '').replace('```', '')
                         new_targets = json.loads(clean_res)
                         
@@ -167,7 +171,7 @@ with st.sidebar:
                         st.success("تم الحساب والتحديث!")
                         st.rerun()
                 except Exception as e:
-                    st.error("خطأ في الحساب. تأكد من صحة المفتاح أو أعد صياغة المعلومات.")
+                    st.error(f"خطأ في الحساب. (التفاصيل: {e})")
 
 # --- الواجهة الرئيسية ---
 st.markdown("<br><h2 style='text-align: center;'>✨ مساعد التغذية الشخصي</h2><br>", unsafe_allow_html=True)
@@ -195,11 +199,11 @@ with st.container(border=True):
     with tab_camera:
         camera_photo = st.camera_input("تصوير", label_visibility="collapsed")
 
-# --- معالجة الوجبة (باستخدام الموديلات المجانية فقط) ---
+# --- معالجة الوجبة (باستخدام الدالة الأصلية) ---
 text_to_process = st.session_state.process_text
 if text_to_process or camera_photo or uploaded_file:
     try:
-        genai.configure(api_key=api_key)
+        model = get_gemini_model(api_key)
         system_prompt = """
         أنت خبير تغذية. أعد فقط كائن JSON صالح بهذا التنسيق بدون أي إضافات:
         {"food_name": "اسم الطعام", "calories": 0, "protein": 0, "carbs": 0, "fat": 0, "fiber": 0}
@@ -213,18 +217,7 @@ if text_to_process or camera_photo or uploaded_file:
             inputs.append(Image.open(photo_to_process))
         
         with st.spinner("✨ جاري التحليل بذكاء..."):
-            try:
-                # إجبار الكود على استخدام الموديل المجاني السريع
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = model.generate_content(inputs)
-            except Exception as e:
-                # كود احتياطي آمن في حال لم يتم العثور على فلاش
-                if photo_to_process:
-                    model = genai.GenerativeModel('gemini-1.0-pro-vision-latest')
-                else:
-                    model = genai.GenerativeModel('gemini-1.0-pro')
-                response = model.generate_content(inputs)
-                
+            response = model.generate_content(inputs)
             clean_text = response.text.strip().replace('```json', '').replace('```', '')
             data = json.loads(clean_text)
             
