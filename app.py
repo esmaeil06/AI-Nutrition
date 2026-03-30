@@ -164,7 +164,7 @@ carbs_sum = df['carbs'].sum() if not df.empty else 0
 fiber_sum = df['fiber'].sum() if not df.empty else 0
 water_sum = df['water'].sum() if not df.empty else 0
 
-st.markdown(f"<h4 style='text-align: center;'>استهلاك اليوم: {total_cals:.0f} / {t_cal:.0f} kcal</h4>", unsafe_allow_html=True)
+st.markdown(f"<h4 style='text-align: center;'>استهلاك اليوم: {total_cals:.0f} / {t_cal:.0f} كالوريز</h4>", unsafe_allow_html=True)
 st.progress(min(total_cals / t_cal, 1.0) if t_cal > 0 else 0)
 st.write("") 
 
